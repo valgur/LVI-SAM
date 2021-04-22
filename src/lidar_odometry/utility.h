@@ -24,6 +24,7 @@
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
 #include <pcl/registration/icp.h>
+#include <pcl/registration/gicp.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/filter.h>
 #include <pcl/filters/voxel_grid.h>
@@ -57,7 +58,6 @@ using namespace std;
 
 typedef pcl::PointXYZI PointType;
 
-enum class SensorType { VELODYNE, OUSTER };
 
 class ParamServer
 {
@@ -65,19 +65,14 @@ public:
 
     ros::NodeHandle nh;
 
+    std::string PROJECT_NAME;
+
     std::string robot_id;
 
-    //Topics
     string pointCloudTopic;
     string imuTopic;
     string odomTopic;
     string gpsTopic;
-
-    //Frames
-    string lidarFrame;
-    string baselinkFrame;
-    string odometryFrame;
-    string mapFrame;
 
     // GPS Settings
     bool useImuHeadingInitialization;
@@ -89,13 +84,11 @@ public:
     bool savePCD;
     string savePCDDirectory;
 
-    // Lidar Sensor Configuration
-    SensorType sensor;
+    // Velodyne Sensor Configuration: Velodyne
     int N_SCAN;
     int Horizon_SCAN;
+    string timeField;
     int downsampleRate;
-    float lidarMinRange;
-    float lidarMaxRange;
 
     // IMU
     float imuAccNoise;
@@ -103,7 +96,6 @@ public:
     float imuAccBiasN;
     float imuGyrBiasN;
     float imuGravity;
-    float imuRPYWeight;
     vector<double> extRotV;
     vector<double> extRPYV;
     vector<double> extTransV;
@@ -137,8 +129,7 @@ public:
     float surroundingKeyframeSearchRadius;
     
     // Loop closure
-    bool  loopClosureEnableFlag;
-    float loopClosureFrequency;
+    bool loopClosureEnableFlag;
     int   surroundingKeyframeSize;
     float historyKeyframeSearchRadius;
     float historyKeyframeSearchTimeDiff;
@@ -152,94 +143,71 @@ public:
 
     ParamServer()
     {
+        nh.param<std::string>("/PROJECT_NAME", PROJECT_NAME, "sam");
+
         nh.param<std::string>("/robot_id", robot_id, "roboat");
 
-        nh.param<std::string>("lio_sam/pointCloudTopic", pointCloudTopic, "points_raw");
-        nh.param<std::string>("lio_sam/imuTopic", imuTopic, "imu_correct");
-        nh.param<std::string>("lio_sam/odomTopic", odomTopic, "odometry/imu");
-        nh.param<std::string>("lio_sam/gpsTopic", gpsTopic, "odometry/gps");
+        nh.param<std::string>(PROJECT_NAME + "/pointCloudTopic", pointCloudTopic, "points_raw");
+        nh.param<std::string>(PROJECT_NAME + "/imuTopic", imuTopic, "imu_correct");
+        nh.param<std::string>(PROJECT_NAME + "/odomTopic", odomTopic, "odometry/imu");
+        nh.param<std::string>(PROJECT_NAME + "/gpsTopic", gpsTopic, "odometry/gps");
 
-        nh.param<std::string>("lio_sam/lidarFrame", lidarFrame, "base_link");
-        nh.param<std::string>("lio_sam/baselinkFrame", baselinkFrame, "base_link");
-        nh.param<std::string>("lio_sam/odometryFrame", odometryFrame, "odom");
-        nh.param<std::string>("lio_sam/mapFrame", mapFrame, "map");
+        nh.param<bool>(PROJECT_NAME + "/useImuHeadingInitialization", useImuHeadingInitialization, false);
+        nh.param<bool>(PROJECT_NAME + "/useGpsElevation", useGpsElevation, false);
+        nh.param<float>(PROJECT_NAME + "/gpsCovThreshold", gpsCovThreshold, 2.0);
+        nh.param<float>(PROJECT_NAME + "/poseCovThreshold", poseCovThreshold, 25.0);
 
-        nh.param<bool>("lio_sam/useImuHeadingInitialization", useImuHeadingInitialization, false);
-        nh.param<bool>("lio_sam/useGpsElevation", useGpsElevation, false);
-        nh.param<float>("lio_sam/gpsCovThreshold", gpsCovThreshold, 2.0);
-        nh.param<float>("lio_sam/poseCovThreshold", poseCovThreshold, 25.0);
+        nh.param<bool>(PROJECT_NAME + "/savePCD", savePCD, false);
+        nh.param<std::string>(PROJECT_NAME + "/savePCDDirectory", savePCDDirectory, "/tmp/loam/");
 
-        nh.param<bool>("lio_sam/savePCD", savePCD, false);
-        nh.param<std::string>("lio_sam/savePCDDirectory", savePCDDirectory, "/Downloads/LOAM/");
+        nh.param<int>(PROJECT_NAME + "/N_SCAN", N_SCAN, 16);
+        nh.param<int>(PROJECT_NAME + "/Horizon_SCAN", Horizon_SCAN, 1800);
+        nh.param<std::string>(PROJECT_NAME + "/timeField", timeField, "time");
+        nh.param<int>(PROJECT_NAME + "/downsampleRate", downsampleRate, 1);
 
-        std::string sensorStr;
-        nh.param<std::string>("lio_sam/sensor", sensorStr, "");
-        if (sensorStr == "velodyne")
-        {
-            sensor = SensorType::VELODYNE;
-        }
-        else if (sensorStr == "ouster")
-        {
-            sensor = SensorType::OUSTER;
-        }
-        else
-        {
-            ROS_ERROR_STREAM(
-                "Invalid sensor type (must be either 'velodyne' or 'ouster'): " << sensorStr);
-            ros::shutdown();
-        }
-
-        nh.param<int>("lio_sam/N_SCAN", N_SCAN, 16);
-        nh.param<int>("lio_sam/Horizon_SCAN", Horizon_SCAN, 1800);
-        nh.param<int>("lio_sam/downsampleRate", downsampleRate, 1);
-        nh.param<float>("lio_sam/lidarMinRange", lidarMinRange, 1.0);
-        nh.param<float>("lio_sam/lidarMaxRange", lidarMaxRange, 1000.0);
-
-        nh.param<float>("lio_sam/imuAccNoise", imuAccNoise, 0.01);
-        nh.param<float>("lio_sam/imuGyrNoise", imuGyrNoise, 0.001);
-        nh.param<float>("lio_sam/imuAccBiasN", imuAccBiasN, 0.0002);
-        nh.param<float>("lio_sam/imuGyrBiasN", imuGyrBiasN, 0.00003);
-        nh.param<float>("lio_sam/imuGravity", imuGravity, 9.80511);
-        nh.param<float>("lio_sam/imuRPYWeight", imuRPYWeight, 0.01);
-        nh.param<vector<double>>("lio_sam/extrinsicRot", extRotV, vector<double>());
-        nh.param<vector<double>>("lio_sam/extrinsicRPY", extRPYV, vector<double>());
-        nh.param<vector<double>>("lio_sam/extrinsicTrans", extTransV, vector<double>());
+        nh.param<float>(PROJECT_NAME + "/imuAccNoise", imuAccNoise, 0.01);
+        nh.param<float>(PROJECT_NAME + "/imuGyrNoise", imuGyrNoise, 0.001);
+        nh.param<float>(PROJECT_NAME + "/imuAccBiasN", imuAccBiasN, 0.0002);
+        nh.param<float>(PROJECT_NAME + "/imuGyrBiasN", imuGyrBiasN, 0.00003);
+        nh.param<float>(PROJECT_NAME + "/imuGravity", imuGravity, 9.80511);
+        nh.param<vector<double>>(PROJECT_NAME+ "/extrinsicRot", extRotV, vector<double>());
+        nh.param<vector<double>>(PROJECT_NAME+ "/extrinsicRPY", extRPYV, vector<double>());
+        nh.param<vector<double>>(PROJECT_NAME+ "/extrinsicTrans", extTransV, vector<double>());
         extRot = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extRotV.data(), 3, 3);
         extRPY = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extRPYV.data(), 3, 3);
         extTrans = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extTransV.data(), 3, 1);
         extQRPY = Eigen::Quaterniond(extRPY);
 
-        nh.param<float>("lio_sam/edgeThreshold", edgeThreshold, 0.1);
-        nh.param<float>("lio_sam/surfThreshold", surfThreshold, 0.1);
-        nh.param<int>("lio_sam/edgeFeatureMinValidNum", edgeFeatureMinValidNum, 10);
-        nh.param<int>("lio_sam/surfFeatureMinValidNum", surfFeatureMinValidNum, 100);
+        nh.param<float>(PROJECT_NAME + "/edgeThreshold", edgeThreshold, 0.1);
+        nh.param<float>(PROJECT_NAME + "/surfThreshold", surfThreshold, 0.1);
+        nh.param<int>(PROJECT_NAME + "/edgeFeatureMinValidNum", edgeFeatureMinValidNum, 10);
+        nh.param<int>(PROJECT_NAME + "/surfFeatureMinValidNum", surfFeatureMinValidNum, 100);
 
-        nh.param<float>("lio_sam/odometrySurfLeafSize", odometrySurfLeafSize, 0.2);
-        nh.param<float>("lio_sam/mappingCornerLeafSize", mappingCornerLeafSize, 0.2);
-        nh.param<float>("lio_sam/mappingSurfLeafSize", mappingSurfLeafSize, 0.2);
+        nh.param<float>(PROJECT_NAME + "/odometrySurfLeafSize", odometrySurfLeafSize, 0.2);
+        nh.param<float>(PROJECT_NAME + "/mappingCornerLeafSize", mappingCornerLeafSize, 0.2);
+        nh.param<float>(PROJECT_NAME + "/mappingSurfLeafSize", mappingSurfLeafSize, 0.2);
 
-        nh.param<float>("lio_sam/z_tollerance", z_tollerance, FLT_MAX);
-        nh.param<float>("lio_sam/rotation_tollerance", rotation_tollerance, FLT_MAX);
+        nh.param<float>(PROJECT_NAME + "/z_tollerance", z_tollerance, FLT_MAX);
+        nh.param<float>(PROJECT_NAME + "/rotation_tollerance", rotation_tollerance, FLT_MAX);
 
-        nh.param<int>("lio_sam/numberOfCores", numberOfCores, 2);
-        nh.param<double>("lio_sam/mappingProcessInterval", mappingProcessInterval, 0.15);
+        nh.param<int>(PROJECT_NAME + "/numberOfCores", numberOfCores, 2);
+        nh.param<double>(PROJECT_NAME + "/mappingProcessInterval", mappingProcessInterval, 0.15);
 
-        nh.param<float>("lio_sam/surroundingkeyframeAddingDistThreshold", surroundingkeyframeAddingDistThreshold, 1.0);
-        nh.param<float>("lio_sam/surroundingkeyframeAddingAngleThreshold", surroundingkeyframeAddingAngleThreshold, 0.2);
-        nh.param<float>("lio_sam/surroundingKeyframeDensity", surroundingKeyframeDensity, 1.0);
-        nh.param<float>("lio_sam/surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius, 50.0);
+        nh.param<float>(PROJECT_NAME + "/surroundingkeyframeAddingDistThreshold", surroundingkeyframeAddingDistThreshold, 1.0);
+        nh.param<float>(PROJECT_NAME + "/surroundingkeyframeAddingAngleThreshold", surroundingkeyframeAddingAngleThreshold, 0.2);
+        nh.param<float>(PROJECT_NAME + "/surroundingKeyframeDensity", surroundingKeyframeDensity, 1.0);
+        nh.param<float>(PROJECT_NAME + "/surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius, 50.0);
 
-        nh.param<bool>("lio_sam/loopClosureEnableFlag", loopClosureEnableFlag, false);
-        nh.param<float>("lio_sam/loopClosureFrequency", loopClosureFrequency, 1.0);
-        nh.param<int>("lio_sam/surroundingKeyframeSize", surroundingKeyframeSize, 50);
-        nh.param<float>("lio_sam/historyKeyframeSearchRadius", historyKeyframeSearchRadius, 10.0);
-        nh.param<float>("lio_sam/historyKeyframeSearchTimeDiff", historyKeyframeSearchTimeDiff, 30.0);
-        nh.param<int>("lio_sam/historyKeyframeSearchNum", historyKeyframeSearchNum, 25);
-        nh.param<float>("lio_sam/historyKeyframeFitnessScore", historyKeyframeFitnessScore, 0.3);
+        nh.param<bool>(PROJECT_NAME + "/loopClosureEnableFlag", loopClosureEnableFlag, false);
+        nh.param<int>(PROJECT_NAME + "/surroundingKeyframeSize", surroundingKeyframeSize, 50);
+        nh.param<float>(PROJECT_NAME + "/historyKeyframeSearchRadius", historyKeyframeSearchRadius, 10.0);
+        nh.param<float>(PROJECT_NAME + "/historyKeyframeSearchTimeDiff", historyKeyframeSearchTimeDiff, 30.0);
+        nh.param<int>(PROJECT_NAME + "/historyKeyframeSearchNum", historyKeyframeSearchNum, 25);
+        nh.param<float>(PROJECT_NAME + "/historyKeyframeFitnessScore", historyKeyframeFitnessScore, 0.3);
 
-        nh.param<float>("lio_sam/globalMapVisualizationSearchRadius", globalMapVisualizationSearchRadius, 1e3);
-        nh.param<float>("lio_sam/globalMapVisualizationPoseDensity", globalMapVisualizationPoseDensity, 10.0);
-        nh.param<float>("lio_sam/globalMapVisualizationLeafSize", globalMapVisualizationLeafSize, 1.0);
+        nh.param<float>(PROJECT_NAME + "/globalMapVisualizationSearchRadius", globalMapVisualizationSearchRadius, 1e3);
+        nh.param<float>(PROJECT_NAME + "/globalMapVisualizationPoseDensity", globalMapVisualizationPoseDensity, 10.0);
+        nh.param<float>(PROJECT_NAME + "/globalMapVisualizationLeafSize", globalMapVisualizationLeafSize, 1.0);
 
         usleep(100);
     }
@@ -277,8 +245,8 @@ public:
     }
 };
 
-
-sensor_msgs::PointCloud2 publishCloud(ros::Publisher *thisPub, pcl::PointCloud<PointType>::Ptr thisCloud, ros::Time thisStamp, std::string thisFrame)
+template<typename T>
+sensor_msgs::PointCloud2 publishCloud(ros::Publisher *thisPub, T thisCloud, ros::Time thisStamp, std::string thisFrame)
 {
     sensor_msgs::PointCloud2 tempCloud;
     pcl::toROSMsg(*thisCloud, tempCloud);

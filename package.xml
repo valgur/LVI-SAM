@@ -1,14 +1,12 @@
 <?xml version="1.0"?>
 <package>
-  <name>lio_sam</name>
-  <version>1.0.0</version>
-  <description>Lidar Odometry</description>
-
-  <maintainer email="shant@mit.edu">Tixiao Shan</maintainer>
-
-  <license>TODO</license>
-
+  <name>lvi_sam</name>
+  <version>0.0.0</version>
+  <description>A package</description>
+  <maintainer email="shant@mit.com">lalala</maintainer>
   <author>Tixiao Shan</author>
+  <license>BSD-3</license>
+
 
   <buildtool_depend>catkin</buildtool_depend>
 
@@ -16,7 +14,7 @@
   <run_depend>roscpp</run_depend>
   <build_depend>rospy</build_depend>
   <run_depend>rospy</run_depend>
-
+  
   <build_depend>tf</build_depend>
   <run_depend>tf</run_depend>
 
@@ -34,8 +32,6 @@
   <run_depend>geometry_msgs</run_depend>
   <build_depend>nav_msgs</build_depend>
   <run_depend>nav_msgs</run_depend>
-  <build_depend>visualization_msgs</build_depend>
-  <run_depend>visualization_msgs</run_depend>
 
   <build_depend>message_generation</build_depend>
   <run_depend>message_generation</run_depend>

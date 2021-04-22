@@ -1,5 +1,5 @@
 #include "utility.h"
-#include "lio_sam/cloud_info.h"
+#include "lvi_sam/cloud_info.h"
 
 struct smoothness_t{ 
     float value;
@@ -29,7 +29,7 @@ public:
 
     pcl::VoxelGrid<PointType> downSizeFilter;
 
-    lio_sam::cloud_info cloudInfo;
+    lvi_sam::cloud_info cloudInfo;
     std_msgs::Header cloudHeader;
 
     std::vector<smoothness_t> cloudSmoothness;
@@ -39,11 +39,11 @@ public:
 
     FeatureExtraction()
     {
-        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/deskew/cloud_info", 1, &FeatureExtraction::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        subLaserCloudInfo = nh.subscribe<lvi_sam::cloud_info>(PROJECT_NAME + "/lidar/deskew/cloud_info", 5, &FeatureExtraction::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
 
-        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/feature/cloud_info", 1);
-        pubCornerPoints = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/feature/cloud_corner", 1);
-        pubSurfacePoints = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/feature/cloud_surface", 1);
+        pubLaserCloudInfo = nh.advertise<lvi_sam::cloud_info> (PROJECT_NAME + "/lidar/feature/cloud_info", 5);
+        pubCornerPoints = nh.advertise<sensor_msgs::PointCloud2>(PROJECT_NAME + "/lidar/feature/cloud_corner", 5);
+        pubSurfacePoints = nh.advertise<sensor_msgs::PointCloud2>(PROJECT_NAME + "/lidar/feature/cloud_surface", 5);
         
         initializationValue();
     }
@@ -63,7 +63,7 @@ public:
         cloudLabel = new int[N_SCAN*Horizon_SCAN];
     }
 
-    void laserCloudInfoHandler(const lio_sam::cloud_infoConstPtr& msgIn)
+    void laserCloudInfoHandler(const lvi_sam::cloud_infoConstPtr& msgIn)
     {
         cloudInfo = *msgIn; // new cloud info
         cloudHeader = msgIn->header; // new cloud header
@@ -240,9 +240,13 @@ public:
     void freeCloudInfoMemory()
     {
         cloudInfo.startRingIndex.clear();
+        cloudInfo.startRingIndex.shrink_to_fit();
         cloudInfo.endRingIndex.clear();
+        cloudInfo.endRingIndex.shrink_to_fit();
         cloudInfo.pointColInd.clear();
+        cloudInfo.pointColInd.shrink_to_fit();
         cloudInfo.pointRange.clear();
+        cloudInfo.pointRange.shrink_to_fit();
     }
 
     void publishFeatureCloud()
@@ -250,8 +254,8 @@ public:
         // free cloud info memory
         freeCloudInfoMemory();
         // save newly extracted features
-        cloudInfo.cloud_corner  = publishCloud(&pubCornerPoints,  cornerCloud,  cloudHeader.stamp, lidarFrame);
-        cloudInfo.cloud_surface = publishCloud(&pubSurfacePoints, surfaceCloud, cloudHeader.stamp, lidarFrame);
+        cloudInfo.cloud_corner  = publishCloud(&pubCornerPoints,  cornerCloud,  cloudHeader.stamp, "base_link");
+        cloudInfo.cloud_surface = publishCloud(&pubSurfacePoints, surfaceCloud, cloudHeader.stamp, "base_link");
         // publish to mapOptimization
         pubLaserCloudInfo.publish(cloudInfo);
     }
@@ -260,11 +264,11 @@ public:
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "lio_sam");
+    ros::init(argc, argv, "lidar");
 
     FeatureExtraction FE;
 
-    ROS_INFO("\033[1;32m----> Feature Extraction Started.\033[0m");
+    ROS_INFO("\033[1;32m----> Lidar Feature Extraction Started.\033[0m");
    
     ros::spin();
 
